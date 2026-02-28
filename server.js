@@ -1,9 +1,10 @@
-require('dotenv').config();
+try { require('dotenv').config(); } catch(e) {}
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const { pool, initDB } = require('./db');
 
 const authRoutes = require('./routes/auth');
 const fileRoutes = require('./routes/files');
@@ -22,49 +23,60 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/auth', authRoutes);
 app.use('/api/files', fileRoutes);
 
-// Track connected users: { socketId -> { username, room } }
 const users = {};
-// Store messages per room
-const messages = {};
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // Join a room
-  socket.on('join', ({ username, room }) => {
+  socket.on('join', async ({ username, room }) => {
     socket.join(room);
     users[socket.id] = { username, room };
 
-    if (!messages[room]) messages[room] = [];
+    await pool.query(
+      'INSERT INTO rooms (name) VALUES ($1) ON CONFLICT (name) DO NOTHING',
+      [room]
+    );
 
-    // Send chat history
-    socket.emit('history', messages[room]);
+    const result = await pool.query(
+      'SELECT * FROM messages WHERE room = $1 ORDER BY created_at ASC LIMIT 100',
+      [room]
+    );
+    const history = result.rows.map(r => ({
+      id: r.id,
+      username: r.username,
+      text: r.text,
+      fileUrl: r.file_url,
+      filename: r.filename,
+      time: new Date(r.created_at).toLocaleTimeString()
+    }));
 
-    // Notify others
+    socket.emit('history', history);
     io.to(room).emit('system', { msg: `${username} joined the room` });
     updateRoomUsers(room);
   });
 
-  // Chat message
-  socket.on('message', ({ text }) => {
+  socket.on('message', async ({ text, fileUrl, filename }) => {
     const user = users[socket.id];
     if (!user) return;
 
-    const msg = {
-      id: Date.now(),
-      username: user.username,
-      text,
-      time: new Date().toLocaleTimeString()
-    };
+    const result = await pool.query(
+      'INSERT INTO messages (room, username, text, file_url, filename) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [user.room, user.username, text || null, fileUrl || null, filename || null]
+    );
+    const row = result.rows[0];
 
-    messages[user.room].push(msg);
-    // Keep last 100 messages
-    if (messages[user.room].length > 100) messages[user.room].shift();
+    const msg = {
+      id: row.id,
+      username: row.username,
+      text: row.text,
+      fileUrl: row.file_url,
+      filename: row.filename,
+      time: new Date(row.created_at).toLocaleTimeString()
+    };
 
     io.to(user.room).emit('message', msg);
   });
 
-  // WebRTC Signaling
   socket.on('webrtc-offer', ({ to, offer }) => {
     io.to(to).emit('webrtc-offer', { from: socket.id, offer });
   });
@@ -98,7 +110,6 @@ io.on('connection', (socket) => {
     io.to(to).emit('call-ended');
   });
 
-  // Disconnect
   socket.on('disconnect', () => {
     const user = users[socket.id];
     if (user) {
@@ -116,5 +127,8 @@ io.on('connection', (socket) => {
   }
 });
 
-const PORT = process.env.PORT ? process.env.PORT :5000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const PORT = process.env.PORT || 3000;
+
+initDB().then(() => {
+  server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+});
