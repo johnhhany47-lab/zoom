@@ -100,8 +100,9 @@
     #call-modal.active { display: flex; }
     #call-modal h2 { font-size: 1.5rem; }
     #call-modal p { color: #a78bfa; }
-    #videos { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
-    video { width: 320px; height: 240px; background: #000; border-radius: 12px; object-fit: cover; }
+    #videos { position: relative; width: 640px; height: 360px; }
+    #remote-video { width: 640px; height: 360px; background: #000; border-radius: 12px; object-fit: cover; }
+    #local-video { position: absolute; bottom: 10px; left: 10px; width: 120px; height: 90px; background: #000; border-radius: 8px; object-fit: cover; border: 2px solid #7c3aed; }
     .call-controls { display: flex; gap: 12px; }
     .ctrl-btn {
       padding: 12px 24px; border-radius: 10px; border: none;
